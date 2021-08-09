@@ -246,6 +246,7 @@ static t_vbEAError VbEngineEAConnectCb(t_vbEADesc *desc, struct sockaddr_in6 dri
         this_driver->vbEAConnDesc.serverAddr     = desc->serverAddr;
         this_driver->vbEAConnDesc.sockFd         = sockFd;
         this_driver->vbEAConnDesc.args           = this_driver;
+        this_driver->clusterId                   = -1;
       }
 
       if (engine_err == VB_ENGINE_ERROR_NONE)
