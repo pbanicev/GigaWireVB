@@ -551,6 +551,12 @@ typedef struct s_DomainsList
   t_domain *domainsArray;
 } t_domainsList;
 
+typedef struct s_nodesList
+{
+  t_node **nodes;
+  INT32U numNodes;
+} t_nodesList;
+
 typedef struct s_DriverTime
 {
   pthread_mutex_t  mutex;

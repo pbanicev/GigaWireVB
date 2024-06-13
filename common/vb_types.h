@@ -157,6 +157,12 @@ typedef struct s_PSD
   t_MSBsList      MSBsList;
 } t_PSD;
 
+typedef struct s_lastPower
+{
+  INT16U numPowers;
+  FLOAT *Power;
+} t_lastPower;
+
 typedef struct s_processMeasure
 {
   INT8U         planID;
@@ -198,6 +204,7 @@ typedef struct s_nodeMasures
   t_processMeasure    SNRProbesMeasure;
   t_processMeasure    snrLowXtalk;
   t_PSD               Psd;
+  t_lastPower         Power;
 } t_nodeMeasures;
 
 typedef struct s_additionalInfo1

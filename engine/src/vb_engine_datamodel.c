@@ -51,6 +51,8 @@
  */
 
 #include "types.h"
+#include <float.h>
+#include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -448,6 +450,38 @@ static t_VB_engineErrorCode NumNodesLoopCb(t_VBDriver *driver, t_domain *domain,
 
 /*******************************************************************/
 
+static t_VB_engineErrorCode NodeListInsert(t_node *node, t_nodesList *nodesList)
+{
+  t_VB_engineErrorCode ret = VB_ENGINE_ERROR_NONE;
+
+  if ((node == NULL) || (nodesList == NULL))
+  {
+    ret = VB_ENGINE_ERROR_BAD_ARGUMENTS;
+  }
+
+  if (ret == VB_ENGINE_ERROR_NONE)
+  {
+    if (node->type == VB_NODE_DOMAIN_MASTER)
+    {
+      if (nodesList->nodes == NULL)
+      {
+        ret = VB_ENGINE_ERROR_MALLOC;
+      }
+
+      if (ret == VB_ENGINE_ERROR_NONE)
+      {
+
+        nodesList->nodes[nodesList->numNodes] = node;
+        nodesList->numNodes++;
+      }
+    }
+  }
+
+  return ret;
+}
+
+/*******************************************************************/
+
 static t_VB_engineErrorCode NodeMACListInsert(t_node *node, t_nodesMacList *macList)
 {
   t_VB_engineErrorCode ret = VB_ENGINE_ERROR_NONE;
@@ -511,6 +545,30 @@ static t_VB_engineErrorCode NodesMACListCb(t_VBDriver *driver, t_domain *domain,
   {
     // Insert MAC in list
     ret = NodeMACListInsert(node, mac_list);
+  }
+
+  return ret;
+}
+
+/*******************************************************************/
+
+static t_VB_engineErrorCode CompleteLinesNodesListCb(t_VBDriver *driver, t_domain *domain, t_node *node, void *args)
+{
+  t_VB_engineErrorCode ret = VB_ENGINE_ERROR_NONE;
+  t_nodesList  *nodes_list = (t_nodesList *)args;
+
+  if ((node == NULL) || (domain == NULL) || (nodes_list == NULL))
+  {
+    ret = VB_ENGINE_ERROR_BAD_ARGUMENTS;
+  }
+
+  if (ret == VB_ENGINE_ERROR_NONE)
+  {
+    if (VbEngineDatamodelDomainIsComplete(domain) == TRUE)
+    {
+      // Insert Node in list
+      ret = NodeListInsert(node, nodes_list);
+    }
   }
 
   return ret;
@@ -1889,6 +1947,67 @@ t_VB_engineErrorCode VbEngineDatamodelAllNodesMacGet(t_nodesMacList *macList, BO
 
 /*******************************************************************/
 
+t_VB_engineErrorCode VbEngineDatamodelClusterXAllCompleteLinesGet(t_nodesList *nodesList, INT32U clusterId)
+{
+  t_VB_engineErrorCode ret = VB_ENGINE_ERROR_NONE;
+  t_vbEngineNumNodes   num_nodes;
+  t_node **nodes = NULL;
+
+  bzero(&num_nodes, sizeof(num_nodes));
+
+  if (nodesList == NULL)
+  {
+    ret = VB_ENGINE_ERROR_BAD_ARGUMENTS;
+  }
+  else
+  {
+    // Init field
+    nodesList->numNodes = 0;
+  }
+
+  if (ret == VB_ENGINE_ERROR_NONE)
+  {
+    // Get number of nodes
+    ret = VbEngineDataModelNumNodesInClusterXGet(clusterId, &num_nodes);
+  }
+
+  if (ret == VB_ENGINE_ERROR_NONE)
+  {
+    // Allocate memory for List of Nodes
+    if (num_nodes.numCompleteLines > 0)
+    {
+      nodes = (t_node**)calloc(num_nodes.numCompleteLines, sizeof(*nodes));
+      if (nodes == NULL)
+      {
+        ret = VB_ENGINE_ERROR_MALLOC;
+      }
+    }
+  }
+
+  if (ret == VB_ENGINE_ERROR_NONE)
+  {
+    // Init fields
+    nodesList->nodes = nodes;
+
+    if (nodesList->nodes != NULL)
+    {
+      ret = VbEngineDatamodelClusterXAllNodesLoop(CompleteLinesNodesListCb, clusterId, (void *)nodesList);
+    }
+  }
+
+  if (ret != VB_ENGINE_ERROR_NONE)
+  {
+    if (nodes != NULL)
+    {
+      free(nodes);
+    }
+  }
+
+  return ret;
+}
+
+/*******************************************************************/
+
 t_VB_engineErrorCode VbEngineDatamodelClusterXAllNodesMacGet(t_nodesMacList *macList, BOOLEAN onlyCompleteLines, INT32U clusterId)
 {
   t_VB_engineErrorCode ret = VB_ENGINE_ERROR_NONE;
@@ -2557,6 +2676,79 @@ t_VB_engineErrorCode VbEngineSeedIndexByMacSet(INT8U *nodeMac, INT16U seedIndex,
   return ret;
 }
 
+/*******************************************************************/
+
+t_VB_engineErrorCode VbEngineLinePSDShape(INT32U clusterId)
+{
+  t_VB_engineErrorCode   ret = VB_ENGINE_ERROR_NONE;
+  t_nodesList nodesList = {0};
+
+  if (ret == VB_ENGINE_ERROR_NONE)
+  {
+    ret = VbEngineDatamodelClusterXAllCompleteLinesGet(&nodesList, clusterId);
+  }
+
+  if (ret == VB_ENGINE_ERROR_NONE && nodesList.numNodes > 0)
+  {
+    INT16U i;
+
+    for (i = 0; i < nodesList.numNodes; i++)
+    {
+      t_node *node = nodesList.nodes[i];
+      INT16U numPowers;
+
+      if (node->measures.BGNMeasure.numMeasures == 0)
+      {
+        continue;
+      }
+
+      numPowers = node->measures.BGNMeasure.numMeasures;
+      if (node->measures.Power.numPowers < numPowers)
+      {
+        free(node->measures.Power.Power);
+        node->measures.Power.Power = (FLOAT *)calloc(numPowers, sizeof(FLOAT));
+        if (node->measures.Power.Power == NULL)
+        {
+          ret = VB_ENGINE_ERROR_MALLOC;
+          break;
+        }
+        // TODO: initialize with default power >0
+      }
+
+      if (ret == VB_ENGINE_ERROR_NONE)
+      {
+        INT16U j, maxPowerIdx = 0, minPowerIdx = 0;
+        FLOAT maxPower = FLT_MIN;
+        FLOAT minPower = FLT_MAX;
+        FLOAT *Powers = node->measures.Power.Power;
+        FLOAT tPower;
+
+        for (j = 0; j < numPowers; j++)
+        {
+          if (maxPower < Powers[j])
+          {
+            maxPowerIdx = j;
+            maxPower = Powers[j];
+          }
+          if (minPower > Powers[j])
+          {
+            minPowerIdx = j;
+            minPower = Powers[j];
+          }
+        }
+
+        tPower = fminf(minPower, maxPower);
+        // tPower = fminf(tPower, ttPower); TODO
+        Powers[maxPowerIdx] -= tPower;
+        Powers[minPowerIdx] += tPower;
+      }
+    }
+
+    free(nodesList.nodes);
+  }
+
+  return ret;
+}
 
 /*******************************************************************/
 
